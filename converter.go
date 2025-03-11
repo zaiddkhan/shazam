@@ -15,6 +15,17 @@ import (
 	"github.com/hajimehoshi/go-mp3"
 )
 
+type Hash struct {
+	Key        uint32 // Unique hash key
+	TimeOffset int    // Time offset in the song (e.g., frame number)
+}
+
+type Peak struct {
+	Time      int     // Time index (frame number)
+	Frequency int     // Frequency index (bin number)
+	Magnitude float64 // Magnitude of the peak
+}
+
 func mp3ToWav(file multipart.File) ([]byte, error) {
 	decoder, err := mp3.NewDecoder(file)
 	if err != nil {
@@ -95,4 +106,57 @@ func computeSpectrogram(data []float64, sampleRate, windowSize, hopSize int) [][
 		spectrogram[i] = magnitude
 	}
 	return spectrogram
+}
+
+func isLocalMax(spectrogram [][]float64, t, f int) bool {
+	magnitude := spectrogram[t][f]
+
+	for dt := -1; dt <= 1; dt++ {
+		for df := -1; df <= 1; df++ {
+			if dt == 0 && df == 0 {
+				continue
+			}
+			nt := t + dt
+			nf := f + df
+
+			if nt >= 0 && nt < len(spectrogram) && nf >= 0 && nf < len(spectrogram[nt]) {
+				if spectrogram[nt][nf] > magnitude {
+					return false
+				}
+			}
+		}
+	}
+	return true
+}
+
+func findPeaks(spectrogram [][]float64) []Peak {
+	var peaks []Peak
+	for t, frame := range spectrogram {
+		for f, magnitude := range frame {
+			if isLocalMax(spectrogram, t, f) {
+				peaks = append(peaks, Peak{Time: t, Frequency: f, Magnitude: magnitude})
+			}
+		}
+	}
+	return peaks
+}
+
+func generateHashes(peaks []Peak, maxTimeDelta int) []Hash {
+	var hashes []Hash
+	for i := 0; i < len(peaks); i++ {
+		for j := i + 1; j < len(peaks); j++ {
+			if peaks[j].Time-peaks[i].Time <= maxTimeDelta {
+				hash := createHash(peaks[i], peaks[j])
+				hashes = append(hashes, Hash{
+					Key:        hash,
+					TimeOffset: peaks[i].Time,
+				})
+			}
+		}
+	}
+	return hashes
+}
+
+func createHash(peak1, peak2 Peak) uint32 {
+	return uint32(peak1.Frequency)<<16 | uint32(peak2.Frequency)<<8 | uint32(peak2.Time-peak1.Time)
 }
